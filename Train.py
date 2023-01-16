@@ -79,7 +79,7 @@ class MCTS:
             improved_policy[i] /= tot
         return improved_policy
 
-    def selfPlay(self, nn, engine, simulations_per_turn=25): # returns list of (state, policy, final outcome)
+    def selfPlay(self, nn, engine, simulations_per_turn=50): # returns list of (state, policy, final outcome)
         game_history = []
         state = State()
         while(True):
@@ -124,7 +124,7 @@ def getNNPlayer(nn):
     def move(state):
         mcts = MCTS()
         engine = GameEngine()
-        policy = mcts.searchTurn(nn, engine, state, 25)
+        policy = mcts.searchTurn(nn, engine, state, 50)
         
         pi = np.array(policy)
         noise = np.reshape(np.random.dirichlet([0.03 for i in range(GameEngine.NUM_ACTIONS)], 1), (-1))
@@ -141,10 +141,9 @@ def getNNPlayer(nn):
         return action
     return move
 
-def train(nn, data, num_epochs=30):
+def train(nn, optimizer, data, num_epochs=30):
     dataset = Connect4Dataset(data)
     dataloader = DataLoader(dataset, batch_size=32, shuffle=True, drop_last=True)
-    optimizer = optim.Adam(nn.parameters())
 
     for epoch in tqdm(range(num_epochs), desc="Training epochs"):
         for (state, policy, value) in dataloader:
@@ -167,6 +166,12 @@ def train(nn, data, num_epochs=30):
                 'epoch': epoch,
                 'loss': loss
             })
+
+def copyNNAndOptimizer(nn, optimizer):
+    res_nn = copy.deepcopy(nn)
+    res_optimizer = optim.Adam(res_nn.parameters())
+    res_optimizer.load_state_dict(optimizer.state_dict())
+    return res_nn, res_optimizer
     
 if __name__ == "__main__":    
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -175,10 +180,11 @@ if __name__ == "__main__":
     engine = GameEngine()
     
     nn = NeuralNetwork()
+    optimizer = optim.Adam(nn.parameters())
     nn.eval()
     nn.to(device)
     
-    best_nn = copy.deepcopy(nn)
+    best_nn, best_optimizer = copyNNAndOptimizer(nn, optimizer)
     
     initial_nn = copy.deepcopy(nn)
     mcts = MCTS()
@@ -221,7 +227,7 @@ if __name__ == "__main__":
         
         tqdm.write("Training on self play results")
         nn.train()
-        train(nn, samples)
+        train(nn, optimizer, samples)
         nn.eval()
         
         state = samples[-1][0]
@@ -250,10 +256,10 @@ if __name__ == "__main__":
         })
         if win_rate + draw_rate >= 0.51:
             tqdm.write("Replacing best version")
-            best_nn = copy.deepcopy(nn)
+            best_nn, best_optimizer = copyNNAndOptimizer(nn, optimizer)
         else:
             tqdm.write("Best version not replaced; resetting current to best")
-            nn = copy.deepcopy(best_nn)
+            nn, optimizer = copyNNAndOptimizer(best_nn, best_optimizer)
         
         tqdm.write("Playing against initial")
         wr2 = referee.calcWinRate(getNNPlayer(nn), getNNPlayer(initial_nn), 20)
